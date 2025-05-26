@@ -25,7 +25,7 @@ class StudentController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'username' => 'required|string|max:255|unique:students',
+            'username' => 'required|string|max:255|unique:users|unique:students|unique:teachers',
             'password' => 'required|string|min:6|confirmed',
             'is_active' => 'required|boolean',
         ]);
@@ -218,8 +218,8 @@ class StudentController extends Controller
         // التأكد أنه لم يُربط من قبل مع هذا المعلم
         if ($teacher->students()->where('student_id', $student->id)->exists()) {
             return $this->apiResponse(
+                ['student' => $student],
                 'This student is already assigned to you.',
-                MessageConstants::QUERY_NOT_EXECUTED,
                 409
             );
         }
@@ -236,18 +236,54 @@ class StudentController extends Controller
 
     public function Subscriptions()
     {
-        $auth= auth('student')->user();
+        $auth = auth('student')->user();
+
         $StudentAnswerCount = StudentAnswer::where('student_id', $auth->id)->count();
 
-        $pastResults = StudentAnswer::where('student_id', $auth->id)->with('exam')->get();
+        // جلب كل إجابات الطالب مع الامتحانات
+        $pastResults = StudentAnswer::where('student_id', $auth->id)
+            ->with('exam')
+            ->get();
 
-        $data=[
-            'StudentAnswerCount' =>  $StudentAnswerCount,
-            'pastResults' =>  $pastResults,
+        // تجميع الإجابات حسب الامتحان
+        $groupedByExam = $pastResults->groupBy('exam_id');
+
+        $percentages = [];
+
+        foreach ($groupedByExam as $examId => $answers) {
+            $score = $answers->sum(function ($answer) {
+                return (float) $answer->score;
+            });
+
+            $totalQuestions = (int) ($answers->first()->total_questions ?? 1);
+
+            $percentage = $totalQuestions > 0 ? ($score / $totalQuestions) * 100 : 0;
+
+            $percentages[] = [
+                'exam_id' => $examId,
+                'exam_title' => $answers->first()->exam->title ?? '',
+                'score' => $score,
+                'total_questions' => $totalQuestions,
+                'percentage' => round($percentage, 2),
+            ];
+        }
+
+        // أفضل نتيجة
+        $bestResult = collect($percentages)->sortByDesc('percentage')->first();
+
+        // متوسط النتائج
+        $averagePercentage = collect($percentages)->avg('percentage');
+
+        $data = [
+            'StudentAnswerCount' => $StudentAnswerCount,
+            'bestOverallResult' => $bestResult,
+            'averagePercentage' => round($averagePercentage, 2),
+            'pastResults' => $pastResults,
         ];
 
         return $this->apiResponse($data, MessageConstants::INDEX_SUCCESS, 200);
     }
+
 
     public function dashboard()
     {

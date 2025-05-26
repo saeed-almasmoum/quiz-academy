@@ -20,7 +20,7 @@ class OnlyUserCanAccess
     { 
 
         // dd(auth()->user());
-        if (!(auth()->user() instanceof \App\Models\User)) {
+        if (!(auth('user')->user() instanceof \App\Models\User)) {
 
             return $this->apiResponse('Unauthorized: Only users can access this resource.', MessageConstants::QUERY_NOT_EXECUTED, 403);
         }

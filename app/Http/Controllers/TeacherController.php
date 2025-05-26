@@ -25,7 +25,7 @@ class TeacherController extends Controller
         // }
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'username' => 'required|string|max:255|unique:teachers',
+            'username' => 'required|string|max:255|unique:users|unique:students|unique:teachers',
             'password' => 'required|string|min:6|confirmed',
             'is_active' => 'required|boolean',
 
@@ -81,7 +81,7 @@ class TeacherController extends Controller
         $searchName = $request->input('name');
 
         $totalTeachers = Teacher::count();
-        $query = Teacher::with('students')->withCount('students');
+        $query = Teacher::with(['exams','students'])->withCount('students')->withCount('exams');
 
         $query->where(function ($q) use ($searcUserhName, $searchName) {
             if (!empty($searcUserhName)) {

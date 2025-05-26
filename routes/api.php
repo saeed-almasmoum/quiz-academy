@@ -160,9 +160,8 @@ Route::group(
         'prefix' => 'filesoffice'
     ],
     function ($router) {
-        Route::post('/index', [FilesOfficeController::class, 'index']);
+        // Route::post('/index', [FilesOfficeController::class, 'index']);
         Route::post('/store', [FilesOfficeController::class, 'store']);
-        Route::post('/show/{id}', [FilesOfficeController::class, 'show']);
         Route::post('/update/{id}', [FilesOfficeController::class, 'update']);
         Route::post('/delete/{id}', [FilesOfficeController::class, 'destroy']);
     }
@@ -171,12 +170,13 @@ Route::group(
 
 Route::group(
     [
-        'middleware' => [JwtMiddleware::class, OnlyStudentCanAccess::class],
+        'middleware' => [JwtMiddleware::class],
         'prefix' => 'filesoffice'
     ],
     function ($router) {
         Route::post('/index', [FilesOfficeController::class, 'index']);
-  
+        Route::post('/show/{id}', [FilesOfficeController::class, 'show']);
+        Route::post('/resourceData', [FilesOfficeController::class, 'resourceData']);
     }
 
 );

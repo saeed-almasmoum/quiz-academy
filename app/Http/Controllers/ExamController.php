@@ -24,12 +24,16 @@ class ExamController extends Controller
     public function index(Request $request)
     {
         $is_active = $request->input('is_active');
+        $title = $request->input('title');
 
         $query = Exam::withCount('questions');
 
-        $query->where(function ($q) use ($is_active) {
+        $query->where(function ($q) use ($is_active,  $title) {
             if (!empty($is_active)) {
                 $q->orWhere('is_active', 'like', '%' . $is_active . '%');
+            }
+            if (!empty($title)) {
+                $q->orWhere('title', 'like', '%' . $title . '%');
             }
         });
 
@@ -147,10 +151,13 @@ class ExamController extends Controller
         $student = auth('student')->user();
         $exam = Exam::with(['questions.answers'])->find($id);
 
+        if($student){
         $exam['attemptsCount'] = StudentAnswer::where('student_id', $student->id)
             ->where('exam_id', $exam->id)
             ->distinct('created_at') // أو session id لو عندك
             ->count('created_at'); // أو use GROUP BY later
+    
+    }
         if (!$exam) {
             return $this->apiResponse(null, MessageConstants::NOT_FOUND, 404);
         }
@@ -284,7 +291,7 @@ class ExamController extends Controller
         $student=auth('student')->user();
         $titlesearch = $request->input('title');
 
-        $query = Exam::withCount('questions');
+        $query = Exam::withCount('questions')->with('teacher')->where('is_active',1);
 
         $query->where(function ($q) use ($titlesearch) {
             if (!empty($titlesearch)) {

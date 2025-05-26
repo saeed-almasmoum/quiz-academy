@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Constants\MessageConstants;
+use App\Models\filesCategory;
 use App\Models\FilesOffice;
 use App\Traits\ApiResponseTrait;
 use Illuminate\Http\Request;
@@ -16,14 +17,21 @@ class FilesOfficeController extends Controller
      */
     public function index(Request $request)
     {
-        $categorySearch=$request->input('namecategory');
+        $student = auth('student')->user();
+        $categorySearch=$request->input('categoryName');
+        $teacherSearch=$request->input('teacherName');
 
         $query = FilesOffice::with('filesCategory');
 
-        $query->where(function ($q) use ($categorySearch) {
+        $query->where(function ($q) use ($categorySearch, $teacherSearch) {
             if (!empty($categorySearch)) {
                 $q->whereHas('filesCategory', function ($q) use ($categorySearch) {
                     $q->where('name', 'like', '%' . $categorySearch . '%');
+                });
+            }
+            if (!empty($teacherSearch)) {
+                $q->whereHas('teacher', function ($q) use ($teacherSearch) {
+                    $q->where('name', 'like', '%' . $teacherSearch . '%');
                 });
             }
         });
@@ -33,6 +41,21 @@ class FilesOfficeController extends Controller
     }
 
 
+    public function resourceData()
+    {
+        $student = auth('student')->user();
+
+        $category = FilesCategory::get();
+        $teachers=null ; 
+        if($student)
+        // جلب المعلمين المرتبطين بهذا الطالب
+        $teachers = $student->teachers;
+
+        return response()->json([
+            'categories' => $category,
+            'teachers' => $teachers,
+        ]);
+    }
 
     /**
      * Store a newly created resource in storage.
@@ -63,6 +86,9 @@ class FilesOfficeController extends Controller
         $file = FilesOffice::create([
             'category_id' => $request->category_id,
             'file' => $filePath,
+            'teacher_id' =>auth('teacher')->user()->id,
+            // $teacher = auth('teacher')->user();
+
         ]);
 
         return $this->apiResponse($file, MessageConstants::STORE_SUCCESS, 201);
