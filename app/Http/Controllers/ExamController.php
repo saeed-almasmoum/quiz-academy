@@ -112,8 +112,10 @@ class ExamController extends Controller
                 // رفع الصورة إن وجدت
                 $imagePath = null;
                 if ($request->hasFile("questions.$index.image")) {
-                    $imagePath = $request->file("questions.$index.image")->store('questions_images', 'public');
-                }
+                    $image = $request->file("questions.$index.image");
+                    $newName = uniqid() . '.' . $image->getClientOriginalExtension();
+                    $image->move(public_path('questions_images'), $newName);
+                    $imagePath = 'questions_images/' . $newName;                }
 
                 $question = Question::create([
                     'text' => $qData['text'],
@@ -242,7 +244,10 @@ class ExamController extends Controller
             foreach ($request->questions as $index => $qData) {
                 $imagePath = null;
                 if ($request->hasFile("questions.$index.image")) {
-                    $imagePath = $request->file("questions.$index.image")->store('questions_images', 'public');
+                    $image = $request->file("questions.$index.image");
+                    $newName = uniqid() . '.' . $image->getClientOriginalExtension();
+                    $image->move(public_path('questions_images'), $newName);
+                    $imagePath = 'questions_images/' . $newName;
                 }
 
                 $question = Question::create([

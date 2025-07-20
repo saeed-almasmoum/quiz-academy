@@ -23,12 +23,12 @@ class Teacher extends Authenticatable implements JWTSubject
 
     public function filesOffice()
     {
-        return $this->hasMany(filesOffice::class, 'teacher_id');
+        return $this->hasMany(FilesOffice::class, 'teacher_id');
     }
 
     public function exams()
     {
-        return $this->hasMany(exam::class, 'teacher_id');
+        return $this->hasMany(Exam::class, 'teacher_id');
     }
 
 

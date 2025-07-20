@@ -236,53 +236,73 @@ class StudentController extends Controller
 
     public function Subscriptions()
     {
-        $auth = auth('student')->user();
+        $student = auth('student')->user();
 
-        $StudentAnswerCount = StudentAnswer::where('student_id', $auth->id)->count();
-
-        // جلب كل إجابات الطالب مع الامتحانات
-        $pastResults = StudentAnswer::where('student_id', $auth->id)
-            ->with('exam')
+        // جلب كل إجابات الطالب مع الامتحانات والأساتذة
+        $answers = StudentAnswer::where('student_id', $student->id)
+            ->with(['exam.teacher'])
             ->get();
 
-        // تجميع الإجابات حسب الامتحان
-        $groupedByExam = $pastResults->groupBy('exam_id');
+        // تجميع الإجابات حسب الأستاذ
+        $groupedByTeacher = $answers->groupBy(function ($answer) {
+            return optional($answer->exam->teacher)->id;
+        });
 
-        $percentages = [];
+        $resultsByTeacher = [];
 
-        foreach ($groupedByExam as $examId => $answers) {
-            $score = $answers->sum(function ($answer) {
-                return (float) $answer->score;
-            });
+        foreach ($groupedByTeacher as $teacherId => $teacherAnswers) {
+            $teacher = $teacherAnswers->first()->exam->teacher ?? null;
+            if (!$teacher) continue;
 
-            $totalQuestions = (int) ($answers->first()->total_questions ?? 1);
+            $examsStats = [];
 
-            $percentage = $totalQuestions > 0 ? ($score / $totalQuestions) * 100 : 0;
+            // إجابات هذا الطالب فقط لامتحانات هذا الأستاذ
+            $examsGrouped = $teacherAnswers->groupBy('exam_id');
 
-            $percentages[] = [
-                'exam_id' => $examId,
-                'exam_title' => $answers->first()->exam->title ?? '',
-                'score' => $score,
-                'total_questions' => $totalQuestions,
-                'percentage' => round($percentage, 2),
+            foreach ($examsGrouped as $examId => $examAnswers) {
+                $exam = $examAnswers->first()->exam;
+                $score = $examAnswers->sum('score');
+                $totalQuestions = (int) ($examAnswers->first()->total_questions ?? 1);
+                $percentage = $totalQuestions > 0 ? ($score / $totalQuestions) * 100 : 0;
+
+                $examsStats[] = [
+                    'exam_id' => $exam->id,
+                    'exam_title' => $exam->title,
+                    'score' => $score,
+                    'total_questions' => $totalQuestions,
+                    'percentage' => round($percentage, 2),
+                    'exam_details' => [
+                        'title' => $exam->title,
+                        'description' => $exam->description,
+                        'start_at' => $exam->start_at,
+                        'end_at' => $exam->end_at,
+                        'duration_minutes' => $exam->duration_minutes,
+                        'is_visible' => $exam->is_visible,
+                        // أضف أي حقل آخر تحتاجه من جدول الامتحانات
+                    ],
+                ];
+            }
+
+            // حساب أفضل امتحان ومتوسط نسبة الطالب عند هذا الأستاذ
+            $best = collect($examsStats)->sortByDesc('percentage')->first();
+            $average = collect($examsStats)->avg('percentage');
+
+            $resultsByTeacher[] = [
+                'teacher_id' => $teacher->id,
+                'teacher_name' => $teacher->name,
+                'exam_stats' => $examsStats,
+                'best_result' => $best,
+                'average_percentage' => round($average, 2),
             ];
         }
 
-        // أفضل نتيجة
-        $bestResult = collect($percentages)->sortByDesc('percentage')->first();
-
-        // متوسط النتائج
-        $averagePercentage = collect($percentages)->avg('percentage');
-
-        $data = [
-            'StudentAnswerCount' => $StudentAnswerCount,
-            'bestOverallResult' => $bestResult,
-            'averagePercentage' => round($averagePercentage, 2),
-            'pastResults' => $pastResults,
-        ];
-
-        return $this->apiResponse($data, MessageConstants::INDEX_SUCCESS, 200);
+        return $this->apiResponse([
+            'student_id' => $student->id,
+            'results_by_teacher' => $resultsByTeacher,
+        ], MessageConstants::INDEX_SUCCESS, 200);
     }
+
+
 
 
     public function dashboard()
@@ -290,7 +310,7 @@ class StudentController extends Controller
         $auth = auth('student')->user();
 
         $StudentAnswerCount = StudentAnswer::where('student_id', $auth->id)->count();
-        $pastResults = StudentAnswer::where('student_id', $auth->id)->latest()->take(5)->get();
+        $pastResults = StudentAnswer::where('student_id', $auth->id)->latest()->take(5)->with('exam')->get();
 
         $teachers = $auth->teachers;
 

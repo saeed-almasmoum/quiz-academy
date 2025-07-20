@@ -50,40 +50,56 @@ class AuthController extends Controller
             'password' => 'required|string',
         ]);
 
-        // return  $request;
         $credentials = $request->only('username', 'password');
 
         // نحاول أولاً مع جدول users
-        if (User::where('username', $credentials['username'])->exists()) {
+        if ($user = User::where('username', $credentials['username'])->first()) {
+
             if (! $token = Auth::guard('user')->attempt($credentials)) {
-                // return response()->json(['error' => 'Wrong password'], 401);
                 return $this->apiResponse('Wrong password', MessageConstants::QUERY_NOT_EXECUTED, 401);
             }
-            // return Auth::guard('user')->user();
 
-            return $this->apiResponse(['token' => $token, 'type' => 'user', 'user' => Auth::guard('user')->user()], MessageConstants::QUERY_EXECUTED, 200);
+            return $this->apiResponse([
+                'token' => $token,
+                'type' => 'user',
+                'user' => Auth::guard('user')->user()
+            ], MessageConstants::QUERY_EXECUTED, 200);
         }
 
-        // إذا لم يكن مستخدم، نحاول مع جدول teachers
-        if (Teacher::where('username', $credentials['username'])->exists()) {
+        // معلم
+        if ($teacher = Teacher::where('username', $credentials['username'])->first()) {
+            if (! $teacher->is_active) {
+                return $this->apiResponse('Teacher account is not active', MessageConstants::QUERY_NOT_EXECUTED, 403);
+            }
+
             if (! $token = Auth::guard('teacher')->attempt($credentials)) {
                 return $this->apiResponse('Wrong password', MessageConstants::QUERY_NOT_EXECUTED, 401);
             }
-            return $this->apiResponse(['token' => $token, 'type' => 'teacher', Auth::guard('teacher')->user()], MessageConstants::QUERY_EXECUTED, 200);
+
+            return $this->apiResponse([
+                'token' => $token,
+                'type' => 'teacher',
+                'teacher' => Auth::guard('teacher')->user()
+            ], MessageConstants::QUERY_EXECUTED, 200);
         }
 
-        // نحاول أولاً مع جدول student
-        if (Student::where('username', $credentials['username'])->exists()) {
+        // طالب
+        if ($student = Student::where('username', $credentials['username'])->first()) {
+            if (! $student->is_active) {
+                return $this->apiResponse('Student account is not active', MessageConstants::QUERY_NOT_EXECUTED, 403);
+            }
+
             if (! $token = Auth::guard('student')->attempt($credentials)) {
-                // return response()->json(['error' => 'Wrong password'], 401);
                 return $this->apiResponse('Wrong password', MessageConstants::QUERY_NOT_EXECUTED, 401);
             }
-            // return Auth::guard('user')->user();
 
-            return $this->apiResponse(['token' => $token, 'type' => 'student', 'student' => Auth::guard('student')->user()], MessageConstants::QUERY_EXECUTED, 200);
+            return $this->apiResponse([
+                'token' => $token,
+                'type' => 'student',
+                'student' => Auth::guard('student')->user()
+            ], MessageConstants::QUERY_EXECUTED, 200);
         }
 
-        // لم يتم العثور على الاسم في أي جدول
         return $this->apiResponse('Username not found', MessageConstants::QUERY_NOT_EXECUTED, 404);
     }
 

@@ -13,6 +13,6 @@ class filesCategory extends Model
 
     public function filesOffice()
     {
-        return $this->hasMany(filesOffice::class, 'category_id');
+        return $this->hasMany(FilesOffice::class, 'category_id');
     }
 }
