@@ -6,6 +6,7 @@ use App\Constants\MessageConstants;
 use App\Models\Exam;
 use App\Models\Student;
 use App\Models\StudentAnswer;
+use App\Models\StudentTeacher;
 use App\Models\Teacher;
 use App\Traits\ApiResponseTrait;
 use Illuminate\Http\Request;
@@ -49,7 +50,9 @@ class StudentController extends Controller
 
         // dd($student);
         // العلاقة many-to-many
-        $teacher->students()->attach($student->id);
+        $teacher->students()->attach($student->id,[
+            'created_at' => now(),
+        ]);
 
         $token = JWTAuth::fromUser($student);
 
@@ -170,10 +173,19 @@ class StudentController extends Controller
         if (!$student) {
             return $this->apiResponse(null, MessageConstants::NOT_FOUND, 404);
         }
-        $student->delete();
+        $teacher = auth('teacher')->user();
+        // return $student; 
+
+        $StudentTeacher = StudentTeacher::where('teacher_id', $teacher->id)->where('student_id', $student->id)->first();
+        if ($StudentTeacher)
+            $StudentTeacher->delete();
+        else if ($StudentTeacher == null) {
+            $student->delete();
+        }
 
         return $this->apiResponse(null, MessageConstants::DELETE_SUCCESS, 200);
     }
+
 
     public function updateIsActive(Request $request, $id)
     {
@@ -238,69 +250,76 @@ class StudentController extends Controller
     {
         $student = auth('student')->user();
 
-        // جلب كل إجابات الطالب مع الامتحانات والأساتذة
+        $teachersWithPivot = $student->teachers()->withPivot('created_at')->get()->keyBy('id');
+
         $answers = StudentAnswer::where('student_id', $student->id)
             ->with(['exam.teacher'])
+            ->orderBy('created_at') // لضمان الترتيب
             ->get();
 
-        // تجميع الإجابات حسب الأستاذ
         $groupedByTeacher = $answers->groupBy(function ($answer) {
             return optional($answer->exam->teacher)->id;
         });
 
         $resultsByTeacher = [];
 
-        foreach ($groupedByTeacher as $teacherId => $teacherAnswers) {
-            $teacher = $teacherAnswers->first()->exam->teacher ?? null;
-            if (!$teacher) continue;
+        foreach ($teachersWithPivot as $teacherId => $teacher) {
+            $teacherAnswers = $groupedByTeacher->get($teacherId, collect());
 
             $examsStats = [];
 
-            // إجابات هذا الطالب فقط لامتحانات هذا الأستاذ
-            $examsGrouped = $teacherAnswers->groupBy('exam_id');
+            if ($teacherAnswers->isNotEmpty()) {
+                // 👇 هنا التجميع حسب exam_id و created_at (أي محاولة مستقلة)
+                $examAttemptsGrouped = $teacherAnswers->groupBy(function ($answer) {
+                    return $answer->exam_id . '|' . $answer->created_at;
+                });
 
-            foreach ($examsGrouped as $examId => $examAnswers) {
-                $exam = $examAnswers->first()->exam;
-                $score = $examAnswers->sum('score');
-                $totalQuestions = (int) ($examAnswers->first()->total_questions ?? 1);
-                $percentage = $totalQuestions > 0 ? ($score / $totalQuestions) * 100 : 0;
+                foreach ($examAttemptsGrouped as $groupKey => $attemptAnswers) {
+                    $exam = $attemptAnswers->first()->exam;
+                    $score = $attemptAnswers->sum('score');
+                    $totalQuestions = (int) ($attemptAnswers->first()->total_questions ?? 1);
+                    $percentage = $totalQuestions > 0 ? ($score / $totalQuestions) * 100 : 0;
 
-                $examsStats[] = [
-                    'exam_id' => $exam->id,
-                    'exam_title' => $exam->title,
-                    'score' => $score,
-                    'total_questions' => $totalQuestions,
-                    'percentage' => round($percentage, 2),
-                    'exam_details' => [
-                        'title' => $exam->title,
-                        'description' => $exam->description,
-                        'start_at' => $exam->start_at,
-                        'end_at' => $exam->end_at,
-                        'duration_minutes' => $exam->duration_minutes,
-                        'is_visible' => $exam->is_visible,
-                        // أضف أي حقل آخر تحتاجه من جدول الامتحانات
-                    ],
-                ];
+                    $examsStats[] = [
+                        'exam_id' => $exam->id,
+                        'exam_title' => $exam->title,
+                        'submitted_at' => $attemptAnswers->first()->created_at,
+                        'score' => $score,
+                        'total_questions' => $totalQuestions,
+                        'percentage' => round($percentage, 2),
+                        'exam_details' => [
+                            'title' => $exam->title,
+                            'description' => $exam->description,
+                            'start_at' => $exam->start_at,
+                            'end_at' => $exam->end_at,
+                            'duration_minutes' => $exam->duration_minutes,
+                            'is_visible' => $exam->is_visible,
+                        ],
+                    ];
+                }
             }
 
-            // حساب أفضل امتحان ومتوسط نسبة الطالب عند هذا الأستاذ
             $best = collect($examsStats)->sortByDesc('percentage')->first();
             $average = collect($examsStats)->avg('percentage');
 
             $resultsByTeacher[] = [
                 'teacher_id' => $teacher->id,
                 'teacher_name' => $teacher->name,
+                'joined_at' => $teacher->pivot->created_at,
                 'exam_stats' => $examsStats,
                 'best_result' => $best,
-                'average_percentage' => round($average, 2),
+                'average_percentage' => $examsStats ? round($average, 2) : null,
             ];
         }
 
         return $this->apiResponse([
             'student_id' => $student->id,
-            'results_by_teacher' => $resultsByTeacher,
+            'results_by_teacher' => $resultsByTeacher
         ], MessageConstants::INDEX_SUCCESS, 200);
     }
+
+
+
 
 
 

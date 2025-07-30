@@ -10,17 +10,37 @@ use Illuminate\Support\Facades\Validator;
 
 class FilesCategoryController extends Controller
 {
-    use ApiResponseTrait; 
+    use ApiResponseTrait;
+
+
+    public function index()
+    {
+        $student = auth('student')->user();
+        $query = filescategory::query();
+        // $query->where('teacher_id', $teacher->id);
+
+        $teacherIds = $student->teachers()->pluck('teachers.id')->toArray();
+
+        $query->whereIn('teacher_id', $teacherIds);
+
+
+        $filescategories = $query->paginate(50);
+        return $this->apiResponse($filescategories, MessageConstants::INDEX_SUCCESS, 201);
+    }
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function indexTeacher()
     {
+        $teacher = auth('teacher')->user();
         $query = filescategory::query();
+        $query->where('teacher_id', $teacher->id);
+
 
         $filescategories=$query->paginate(50);
         return $this->apiResponse($filescategories, MessageConstants::INDEX_SUCCESS, 201);
     }
+
 
 
 
@@ -29,6 +49,7 @@ class FilesCategoryController extends Controller
      */
     public function store(Request $request)
     {
+        $teacher = auth('teacher')->user();
         // return $request;
         $validator = Validator::make($request->all(), [
             'name' => 'required|unique:files_categories,name',
@@ -40,6 +61,7 @@ class FilesCategoryController extends Controller
 
         $filescategory=filescategory::create([
             'name' => $request->name,
+            'teacher_id' => $teacher->id,
         ]);
 
         return $this->apiResponse($filescategory, MessageConstants::STORE_SUCCESS, 201);
@@ -51,7 +73,7 @@ class FilesCategoryController extends Controller
 
     public function show($id)
     {
-        $filescategory = filescategory::with(['filesOffice'])->find($id);
+        $filescategory = filescategory::with(['filesOffice', 'teacher'])->find($id);
 
         if (!$filescategory) {
             return $this->apiResponse(null, MessageConstants::NOT_FOUND, 404);
@@ -65,6 +87,8 @@ class FilesCategoryController extends Controller
 
     public function update(Request $request, $id)
     {
+        $teacher = auth('teacher')->user();
+
         $validator = Validator::make($request->all(), [
             'name' => 'required|unique:files_categories,name,' . $id,
         ]);
@@ -81,6 +105,8 @@ class FilesCategoryController extends Controller
 
         $category->update([
             'name' => $request->name,
+            'teacher_id' => $teacher->id,
+
         ]);
 
         return $this->apiResponse($category, MessageConstants::UPDATE_SUCCESS, 200);

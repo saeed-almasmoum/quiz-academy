@@ -130,7 +130,7 @@ Route::group(
         'prefix' => 'filescategory'
     ],
     function ($router) {
-        Route::post('/index', [FilesCategoryController::class, 'index']);
+        Route::post('/indexTeacher', [FilesCategoryController::class, 'indexTeacher']);
         Route::post('/store', [FilesCategoryController::class, 'store']);
         Route::post('/show/{id}', [FilesCategoryController::class, 'show']);
         Route::post('/update/{id}', [FilesCategoryController::class, 'update']);
@@ -141,18 +141,16 @@ Route::group(
 
 Route::group(
     [
-        'middleware' => [JwtMiddleware::class, OnlyTeacherCanAccess::class],
+        'middleware' => [JwtMiddleware::class, OnlyStudentCanAccess::class],
         'prefix' => 'filescategory'
     ],
     function ($router) {
         Route::post('/index', [FilesCategoryController::class, 'index']);
-        Route::post('/store', [FilesCategoryController::class, 'store']);
-        Route::post('/show/{id}', [FilesCategoryController::class, 'show']);
-        Route::post('/update/{id}', [FilesCategoryController::class, 'update']);
-        Route::post('/delete/{id}', [FilesCategoryController::class, 'destroy']);
- 
+      
     }
 );
+
+
 
 Route::group(
     [
@@ -164,6 +162,7 @@ Route::group(
         Route::post('/store', [FilesOfficeController::class, 'store']);
         Route::post('/update/{id}', [FilesOfficeController::class, 'update']);
         Route::post('/delete/{id}', [FilesOfficeController::class, 'destroy']);
+        Route::post('/indexTeacher', [FilesOfficeController::class, 'indexTeacher']);
     }
 
 );

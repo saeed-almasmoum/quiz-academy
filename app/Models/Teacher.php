@@ -18,9 +18,14 @@ class Teacher extends Authenticatable implements JWTSubject
 
     public function students()
     {
-        return $this->belongsToMany(Student::class);
+        return $this->belongsToMany(Student::class)->withTimestamps();
     }
 
+    public function filesCategory()
+    {
+        return $this->hasMany(filesCategory::class, 'teacher_id');
+    }
+    
     public function filesOffice()
     {
         return $this->hasMany(FilesOffice::class, 'teacher_id');

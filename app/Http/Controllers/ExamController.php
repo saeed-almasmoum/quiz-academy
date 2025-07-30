@@ -23,10 +23,14 @@ class ExamController extends Controller
      */
     public function index(Request $request)
     {
+        $teacher = auth('teacher')->user();
+
         $is_active = $request->input('is_active');
         $title = $request->input('title');
 
         $query = Exam::withCount('questions');
+        $query->where('teacher_id', $teacher->id);
+
 
         $query->where(function ($q) use ($is_active,  $title) {
             if (!empty($is_active)) {
@@ -67,7 +71,7 @@ class ExamController extends Controller
             'questions.*.answers' => 'required|array|min:2',
             'questions.*.answers.*.text' => 'required|string',
             'questions.*.answers.*.is_correct' => 'nullable|boolean',
-            'questions.*.image' => 'nullable|file|image|mimes:jpeg,png,jpg,gif|max:2048',
+            'questions.*.image' => 'nullable|file|image|mimes:jpeg,png,jpg,gif',
         ]);
 
         if ($validator->fails()) {
@@ -115,7 +119,8 @@ class ExamController extends Controller
                     $image = $request->file("questions.$index.image");
                     $newName = uniqid() . '.' . $image->getClientOriginalExtension();
                     $image->move(public_path('questions_images'), $newName);
-                    $imagePath = 'questions_images/' . $newName;                }
+                    $imagePath = 'questions_images/' . $newName;
+                }
 
                 $question = Question::create([
                     'text' => $qData['text'],
@@ -153,13 +158,13 @@ class ExamController extends Controller
         $student = auth('student')->user();
         $exam = Exam::with(['questions.answers'])->find($id);
 
-        if($student){
-        $exam['attemptsCount'] = StudentAnswer::where('student_id', $student->id)
-            ->where('exam_id', $exam->id)
-            ->distinct('created_at') // أو session id لو عندك
-            ->count('created_at'); // أو use GROUP BY later
-    
-    }
+        if ($student) {
+            $exam['attemptsCount'] = StudentAnswer::where('student_id', $student->id)
+                ->where('exam_id', $exam->id)
+                ->distinct('created_at') // أو session id لو عندك
+                ->count('created_at'); // أو use GROUP BY later
+
+        }
         if (!$exam) {
             return $this->apiResponse(null, MessageConstants::NOT_FOUND, 404);
         }
@@ -185,11 +190,14 @@ class ExamController extends Controller
             'end_at' => 'nullable|date|after_or_equal:start_at',
             'questions' => 'required|array|min:1',
             'questions.*.text' => 'required|string',
-            // 'questions.*.type' => 'required|in:multiple_choice,true_false',
+            'questions.*.type' => 'required|in:multiple_choice,true_false',
             'questions.*.answers' => 'required|array|min:2',
             'questions.*.answers.*.text' => 'required|string',
             'questions.*.answers.*.is_correct' => 'nullable|boolean',
-            'questions.*.image' => 'nullable|file|image|mimes:jpeg,png,jpg,gif|max:2048',
+            'questions.*.answers.*.id' => 'nullable|integer|exists:answers,id',
+            'questions.*.id' => 'nullable|integer|exists:questions,id',
+            'questions.*.image' => 'nullable|file|image|mimes:jpeg,png,jpg,gif',
+            'questions.*.delete_image' => 'nullable|boolean',
         ]);
 
         if ($validator->fails()) {
@@ -199,12 +207,12 @@ class ExamController extends Controller
         DB::beginTransaction();
 
         try {
-            $exam = Exam::find($id);
-
+            $exam = Exam::with('questions.answers')->find($id);
             if (!$exam) {
                 return $this->apiResponse(null, MessageConstants::NOT_FOUND, 404);
             }
 
+            // معالجة الجدولة وتفعيل الامتحان
             $isScheduled = $request->is_scheduled;
             $isActive = $request->is_active;
 
@@ -215,12 +223,12 @@ class ExamController extends Controller
 
                 if ($startAt && $endAt && $now->between($startAt, $endAt)) {
                     $isActive = true;
-                    // dd($startAt);
                 } else {
                     $isActive = false;
                 }
             }
 
+            // تحديث بيانات الامتحان
             $exam->update([
                 'title' => $request->title,
                 'description' => $request->description,
@@ -231,49 +239,110 @@ class ExamController extends Controller
                 'start_at' => $request->start_at,
                 'end_at' => $request->end_at,
                 'attempt_limit' => $request->attempt_limit,
-
             ]);
 
-            // حذف الأسئلة والإجابات القديمة
-            foreach ($exam->questions as $question) {
+            // جلب الأسئلة الموجودة مسبقًا
+            $existingQuestions = $exam->questions->keyBy('id');
+            $incomingQuestions = collect($request->questions);
+
+            $incomingQuestionIds = $incomingQuestions->pluck('id')->filter()->toArray();
+            $existingQuestionIds = $existingQuestions->keys()->toArray();
+
+            // حذف الأسئلة التي لم تُرسل ضمن الطلب
+            $toDelete = array_diff($existingQuestionIds, $incomingQuestionIds);
+            foreach ($toDelete as $qid) {
+                $question = $existingQuestions[$qid];
                 $question->answers()->delete();
                 $question->delete();
             }
 
-            // إعادة إضافة الأسئلة والإجابات
-            foreach ($request->questions as $index => $qData) {
+            // تحديث أو إنشاء الأسئلة
+            foreach ($incomingQuestions as $index => $qData) {
+                $question = null;
                 $imagePath = null;
+
+                // استرجاع السؤال الموجود إن وُجد
+                if (!empty($qData['id']) && isset($existingQuestions[$qData['id']])) {
+                    $question = $existingQuestions[$qData['id']];
+                    $imagePath = $question->image;
+
+                    // ✅ حذف الصورة القديمة إذا طُلب
+                    if (
+                        isset($qData['delete_image']) &&
+                        filter_var($qData['delete_image'], FILTER_VALIDATE_BOOLEAN) &&
+                        $imagePath &&
+                        file_exists(public_path($imagePath))
+                    ) {
+                        unlink(public_path($imagePath));
+                        $imagePath = null;
+                    }
+                }
+
+                // ✅ إذا تم رفع صورة جديدة لهذا السؤال
                 if ($request->hasFile("questions.$index.image")) {
+                    if (!empty($imagePath) && file_exists(public_path($imagePath))) {
+                        unlink(public_path($imagePath));
+                    }
                     $image = $request->file("questions.$index.image");
                     $newName = uniqid() . '.' . $image->getClientOriginalExtension();
                     $image->move(public_path('questions_images'), $newName);
                     $imagePath = 'questions_images/' . $newName;
                 }
 
-                $question = Question::create([
-                    'text' => $qData['text'],
-                    'type' => $qData['type'],
-                    'image' => $imagePath,
-                    'exam_id' => $exam->id,
-                ]);
-
-                foreach ($qData['answers'] as $answer) {
-                    Answer::create([
-                        'question_id' => $question->id,
-                        'text' => $answer['text'],
-                        'is_correct' => $answer['is_correct'],
+                // تحديث السؤال أو إنشاء جديد
+                if ($question) {
+                    $question->update([
+                        'text' => $qData['text'],
+                        'type' => $qData['type'],
+                        'image' => $imagePath,
                     ]);
+                } else {
+                    $question = Question::create([
+                        'text' => $qData['text'],
+                        'type' => $qData['type'],
+                        'image' => $imagePath,
+                        'exam_id' => $exam->id,
+                    ]);
+                }
+
+                // تحديث الإجابات المرتبطة بالسؤال
+                $existingAnswers = $question->answers->keyBy('id');
+                $incomingAnswers = collect($qData['answers']);
+
+                $incomingAnswerIds = $incomingAnswers->pluck('id')->filter()->toArray();
+                $existingAnswerIds = $existingAnswers->keys()->toArray();
+
+                // حذف الإجابات غير الموجودة في الريكوست
+                $answersToDelete = array_diff($existingAnswerIds, $incomingAnswerIds);
+                Answer::whereIn('id', $answersToDelete)->delete();
+
+                foreach ($incomingAnswers as $answerData) {
+                    if (!empty($answerData['id']) && isset($existingAnswers[$answerData['id']])) {
+                        $existingAnswers[$answerData['id']]->update([
+                            'text' => $answerData['text'],
+                            'is_correct' => $answerData['is_correct'] ?? false,
+                        ]);
+                    } else {
+                        Answer::create([
+                            'question_id' => $question->id,
+                            'text' => $answerData['text'],
+                            'is_correct' => $answerData['is_correct'] ?? false,
+                        ]);
+                    }
                 }
             }
 
             DB::commit();
-
             return $this->apiResponse($exam->load('questions.answers'), MessageConstants::UPDATE_SUCCESS, 200);
         } catch (\Exception $e) {
             DB::rollBack();
             return $this->apiResponse(['error' => $e->getMessage()], MessageConstants::QUERY_NOT_EXECUTED, 500);
         }
     }
+
+
+
+
 
     /**
      * Remove the specified resource from storage.
@@ -292,44 +361,53 @@ class ExamController extends Controller
 
     public function ActiveExams(Request $request)
     {
+        $student = auth('student')->user();
+        $titleSearch = $request->input('title');
 
-        $student=auth('student')->user();
-        $titlesearch = $request->input('title');
+        // 1. الحصول على معرفات المعلمين المرتبطين بالطالب
+        $teacherIds = $student->teachers()->pluck('teachers.id')->toArray();
 
-        $query = Exam::withCount('questions')->with('teacher')->where('is_active',1);
+        // 2. استعلام الامتحانات من معلمين مرتبطين بالطالب فقط
+        $query = Exam::withCount('questions')
+            ->with('teacher')
+            ->where('is_active', 1)
+            ->whereIn('teacher_id', $teacherIds);
 
-        $query->where(function ($q) use ($titlesearch) {
-            if (!empty($titlesearch)) {
-                $q->orWhere('title', 'like', '%' . $titlesearch . '%');
-            }
-        });
-
-
-        
-       
-
-        $exams = $query->paginate(50);
-
-        foreach($exams as $exam)
-        {
-            $exam['attemptsCount'] = StudentAnswer::where('student_id', $student->id)
-                ->where('exam_id', $exam->id)
-                ->distinct('created_at') // أو session id لو عندك
-                ->count('created_at'); // أو use GROUP BY later
+        // 3. بحث بعنوان الامتحان
+        if (!empty($titleSearch)) {
+            $query->where('title', 'like', '%' . $titleSearch . '%');
         }
-        $date = [
-            'exams' => $exams,
-        ];
 
-        return $this->apiResponse($date, MessageConstants::INDEX_SUCCESS, 200);
+        // 4. الحصول على النتائج (بدون فلترة المحاولات أولاً)
+        $exams = $query->get(); // نستخدم get بدلاً من paginate مؤقتاً للفلاتر
+
+        // 5. فلترة الامتحانات حسب عدد المحاولات المسموح بها
+        $filteredExams = $exams->filter(function ($exam) use ($student) {
+            $attemptsCount = StudentAnswer::where('student_id', $student->id)
+                ->where('exam_id', $exam->id)
+                ->distinct('created_at') // أو session_id إذا موجود
+                ->count('created_at');
+
+            // نضيف عدد المحاولات للامتحان (اختياري)
+            $exam->attemptsCount = $attemptsCount;
+
+            // إذا لم يتم تحديد attempt_limit أو لم يتم تجاوزه، نبقي الامتحان
+            return $exam->attempt_limit === null || $attemptsCount < $exam->attempt_limit;
+        })->values(); // إعادة فهرسة المصفوفة بعد الفلترة
+
+        // 6. استخدام pagination يدويًا إن أردت (مثلاً في API response)
+        // أو إرجاع المجموعة ببساطة
+        return $this->apiResponse(['exams' => $filteredExams], MessageConstants::INDEX_SUCCESS, 200);
     }
+
+
 
 
     public function startExam($id)
     {
 
         $student = auth('student')->user();
- 
+
         $exam = Exam::with(['questions.answers'])->find($id);
 
         if (!$exam) {
@@ -364,7 +442,7 @@ class ExamController extends Controller
             'questions' => 'required|array|min:1',
             'questions.*.id' => 'required|integer|exists:questions,id',
             'questions.*.answers' => 'required|array|min:1',
-            'questions.*.answers.*.id' => 'required|integer|exists:answers,id',
+            'questions.*.answers.*.id' => 'nullable|integer|exists:answers,id',
         ]);
 
         if ($validator->fails()) {
@@ -376,6 +454,7 @@ class ExamController extends Controller
         if (!$exam) {
             return $this->apiResponse(null, 'Exam not found', 404);
         }
+
         $attemptsCount = StudentAnswer::where('student_id', $student->id)
             ->where('exam_id', $exam->id)
             ->distinct('created_at') // أو session id لو عندك
@@ -384,9 +463,6 @@ class ExamController extends Controller
         if ($exam->attempt_limit !== null && $attemptsCount >= $exam->attempt_limit) {
             return $this->apiResponse(null, 'You have reached the maximum number of attempts for this exam.', 403);
         }
-
-
-
 
         $submittedQuestions = collect($request->input('questions'));
         $result = [];
@@ -406,14 +482,14 @@ class ExamController extends Controller
                 $score++;
             }
 
-            // حفظ إجابة الطالب
+            // حفظ إجابة الطالب - علامة 1 لكل سؤال صحيح فقط
             StudentAnswer::create([
                 'student_id' => $student->id,
                 'exam_id' => $exam->id,
                 'question_id' => $question->id,
                 'answer_id' => $selectedAnswerId,
-                'score' => $score,
-                'total_questions' =>$exam->questions->count(),
+                'score' => $isCorrect ? 1 : 0,  // تصحيح هنا
+                'total_questions' => $exam->questions->count(),
             ]);
 
             $result[] = [
@@ -428,7 +504,7 @@ class ExamController extends Controller
                         'text' => $a->text,
                         'is_correct' => $a->is_correct,
                     ];
-                })
+                }),
             ];
         }
 
@@ -442,6 +518,7 @@ class ExamController extends Controller
     }
 
 
+
     public function reviewExam($examId)
     {
         $student = auth('student')->user();
@@ -451,8 +528,7 @@ class ExamController extends Controller
             return $this->apiResponse(null, MessageConstants::NOT_FOUND, 404);
         }
 
-        if(!$exam->allow_review)
-        {
+        if (!$exam->allow_review) {
             return $this->apiResponse(null, 'this exams does not allow to review it', 403);
         }
 
@@ -489,23 +565,47 @@ class ExamController extends Controller
             'exam_id' => $exam->id,
             'student_id' => $student->id,
             'review' => $result
-        ], 'Review loaded successfully',200);
+        ], 'Review loaded successfully', 200);
     }
 
     public function getStudentAnswers()
     {
         $student = auth('student')->user();
-        // dd($student);
 
-        $answerStudent= StudentAnswer::with([
-            'student',
-            'exam.questions.answers',
-            // 'question',
-            'answer',
-        ])->where('student_id', $student->id)->get();
+        $answers = StudentAnswer::with('exam')
+            ->where('student_id', $student->id)
+            ->orderBy('created_at')
+            ->get();
 
-        return $this->apiResponse($answerStudent, MessageConstants::INDEX_SUCCESS, 200);
+        // تجميع الإجابات حسب (exam_id + created_at)
+        $grouped = $answers->groupBy(function ($item) {
+            // استخدم وقت الإرسال كوحدة تصنيف
+            return $item->exam_id . '|' . $item->created_at;
+        });
+
+        // إعادة تنسيق البيانات
+        $attempts = $grouped->map(function ($answersGroup) {
+            $exam = $answersGroup->first()->exam;
+            $submittedAt = $answersGroup->first()->created_at;
+
+            return [
+                'exam' => $exam,
+                'submitted_at' => $submittedAt,
+                'answers' => $answersGroup->map(function ($answer) {
+                    return [
+                        'question_id' => $answer->question_id,
+                        'answer_id' => $answer->answer_id,
+                        'score' => $answer->score,
+                        'total_questions' => $answer->total_questions,
+                        'created_at' => $answer->created_at,
+                    ];
+                })->values(),
+            ];
+        })->values(); // إعادة ضبط المفاتيح
+
+        return $this->apiResponse($attempts, MessageConstants::INDEX_SUCCESS, 200);
     }
+
 
 
     public function getStudentAnswerById($id)
@@ -518,10 +618,8 @@ class ExamController extends Controller
             'exam.questions.answers',
             // 'question',
             'answer',
-        ])->where('student_id', $student->id)->where('id',$id)->first();
+        ])->where('student_id', $student->id)->where('id', $id)->first();
 
         return $this->apiResponse($answerStudent, MessageConstants::INDEX_SUCCESS, 200);
     }
-
-    
 }

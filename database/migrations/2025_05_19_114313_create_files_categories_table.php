@@ -14,6 +14,9 @@ return new class extends Migration
         Schema::create('files_categories', function (Blueprint $table) {
             $table->id();
             $table->string('name')->unique();
+            
+            $table->foreignId('teacher_id');
+            $table->foreign('teacher_id')->references('id')->on('teachers')->onDelete('cascade');
             $table->timestamps();
         });
     }

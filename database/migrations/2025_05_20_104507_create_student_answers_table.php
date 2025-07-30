@@ -17,7 +17,7 @@ return new class extends Migration
             $table->foreignId('student_id');
             $table->foreignId('exam_id');
             $table->foreignId('question_id');
-            $table->foreignId('answer_id'); // إجابة الطالب
+            $table->foreignId('answer_id')->nullable(); // إجابة الطالب
             $table->string('score'); // إجابة الطالب
             $table->string('total_questions'); // إجابة الطالب
 
